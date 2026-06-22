@@ -64,6 +64,16 @@ const COVERAGE = { type:'object', additionalProperties:false,
     uncovered:{ type:'array', items:{ type:'object', additionalProperties:false,
       required:['id','whatsMissing'], properties:{ id:{type:'string'}, whatsMissing:{type:'string'} } } } } }
 
+// Deliberate-simplification ledger — harvested from `ponytail:` markers (NOT findings to fix; accepted debt).
+const LEDGER = { type:'object', additionalProperties:false, required:['markers'], properties:{
+  markers:{ type:'array', items:{ type:'object', additionalProperties:false,
+    required:['location','note','ceiling','upgrade','rotRisk'], properties:{
+      location:{type:'string'},                        // file:line
+      note:{type:'string'},                            // what was deliberately kept simple
+      ceiling:{type:['string','null']},                // the named limit (global lock, O(n²), naive heuristic)
+      upgrade:{type:['string','null']},                // the trigger to revisit
+      rotRisk:{type:'boolean'} } } } }                 // true when no upgrade trigger was named
+
 // Gate REPORTS per-gate status; the script computes green from it (harness owns the gate, not the model).
 const GATE_RESULT = { type:'object', additionalProperties:false, required:['target','gates'], properties:{
   target:{type:'string'},
@@ -86,9 +96,18 @@ const SHIP_VERDICT = { type:'object', additionalProperties:false,
         target:{type:'string'}, green:{type:'boolean'},
         residualFindings:{type:'array',items:{type:'string'}} } } },
     integration:{ type:['object','null'], additionalProperties:true },
+    simplifications:{ type:['array','null'], items:{ type:'object', additionalProperties:false,  // the harvested ledger
+      required:['location','note','ceiling','upgrade','rotRisk'], properties:{
+        location:{type:'string'}, note:{type:'string'},
+        ceiling:{type:['string','null']}, upgrade:{type:['string','null']}, rotRisk:{type:'boolean'} } } },
     risk:{ type:['string','null'] },
     recommendation:{ type:'string' } } }
 ```
+
+`simplifications` is deliberate, accepted debt — *not* a residual finding. It does **not** affect the
+harness exit predicate or `status` (a clean run still ships with simplifications on the ledger); it exists so a
+`ponytail:` shortcut can't quietly become permanent. The ship-gate may still raise `risk` if the ledger holds a
+`rotRisk` entry (a shortcut with no upgrade trigger).
 
 ## The script
 
@@ -170,7 +189,15 @@ phase('Implement')
 await implementInDagOrder(targets, contractPlan.sequence, t =>
   agent(`Implement target ${t.name} per its sub-plan ${JSON.stringify(subPlans[t.name])} and research `
       + `${JSON.stringify(research[t.name]?.notes)}, against the FROZEN contract. Match surrounding code and `
-      + `the repo's conventions. Write tests-first where this project is test-driven. Do NOT commit. `
+      + `the repo's conventions. Write tests-first where this project is test-driven. `
+      + `Build LAZY (YAGNI) — take the simplest thing that works, stopping at the first rung that holds: does it `
+      + `need to exist at all? → stdlib → a native platform/framework feature → an already-installed dependency `
+      + `→ one line → only then new code. No unrequested abstractions (no interface with one implementation, no `
+      + `config for a value that never changes), no new dependency for what a few lines cover, fewest files. `
+      + `NEVER simplify away input validation at trust boundaries, error handling that prevents data loss, `
+      + `security, accessibility, or anything the PRD requires. Mark each deliberate shortcut with a `
+      + `\`ponytail: <ceiling>, <upgrade trigger>\` comment (e.g. \`// ponytail: global lock, per-account locks `
+      + `if throughput matters\`) so the gate can harvest it into the debt ledger. Do NOT commit. `
       + `Work in repo ${t.repoPath}; if using a git worktree, stage with \`git add -A\` so the diff is real.`,
     { label:`impl:${t.name}`, phase:'Implement', model:'sonnet', effort:'high',
       isolation: multiRepo ? 'worktree' : undefined, schema: FIXED }))
@@ -239,6 +266,18 @@ while (true) {
   // else: uncovered criteria + surviving findings feed the next Fix pass (the review splice applies them).
 }
 
+// ── LEDGER ── harvest deliberate `ponytail:` simplifications once, from the final diff ─
+// Accepted, on-purpose shortcuts — NOT findings to fix and NOT part of the exit predicate. Harvested at the end
+// (markers accumulate in the final tree) so a deferral can't silently become permanent.
+phase('Gate')
+const ledger = await agent(
+  `Across the targets ${JSON.stringify(targets.map(t => t.repoPath))}, grep each repo for deliberate-`
++ `simplification markers: \`grep -rnE '(#|//|--) ?ponytail:' <repo>\`, skipping node_modules/.git/build output. `
++ `Each hit is one ledger row: location (file:line), the note, its named ceiling and upgrade trigger (parse them `
++ `from the \`ponytail: <ceiling>, <upgrade>\` convention). A marker that names NO upgrade trigger is a rot risk `
++ `— set rotRisk=true. These are accepted shortcuts, not bugs; do not fix anything. Empty result ⇒ markers:[].`,
+  { label:'ledger', phase:'Gate', model:'haiku', schema: LEDGER })
+
 // ── SHIP-GATE ── structured verdict the inline stage branches on ──────────────
 phase('Ship-gate')
 const verdict = await agent(
@@ -246,7 +285,10 @@ const verdict = await agent(
 + `ONLY if every acceptance criterion is met, all applicable gates are green (skips justified), no unresolved `
 + `critical/high findings remain, and no new tech debt was introduced. status='blocked' if residuals remain `
 + `after the loop cap; status='needs-human' if a criterion is contradictory or a decision exceeds the PRD. `
-+ `Be concrete: cite evidence per criterion and per gate. Evidence:\n${JSON.stringify(lastVerdictInputs)}`,
++ `Set \`simplifications\` to the harvested ledger VERBATIM — these are accepted, on-purpose shortcuts, NOT a `
++ `reason to block; a clean run ships WITH them listed. Raise \`risk\` if any ledger entry has rotRisk=true `
++ `(a shortcut with no upgrade trigger). Be concrete: cite evidence per criterion and per gate. `
++ `Evidence:\n${JSON.stringify({ ...lastVerdictInputs, ledger })}`,
   { label:'ship-gate', phase:'Ship-gate', model:'opus', effort:'high', schema: SHIP_VERDICT })
 
 return verdict

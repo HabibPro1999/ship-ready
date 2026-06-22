@@ -100,8 +100,12 @@ the splice points. The phases:
    the repo's existing conventions. Front-loading idiomatic patterns here means review isn't fighting
    nonidiomatic code later.
 4. **Implement** — per target, in the DAG order (independent targets in parallel, dependents sequenced),
-   against the **frozen contract**. Isolate parallel writers (`isolation:'worktree'` within one repo, or a
-   distinct repo path per target).
+   against the **frozen contract**. **Build lazy (YAGNI):** simplest thing that works — stdlib → native
+   platform/framework feature → installed dep → one line → only then new code; no unrequested abstractions;
+   never simplify away validation/error-handling/security/anything the PRD requires. Mark each deliberate
+   shortcut with a `ponytail: <ceiling>, <upgrade trigger>` comment (the gate harvests these into the verdict's
+   debt ledger). Isolate parallel writers (`isolation:'worktree'` within one repo, or a distinct repo path per
+   target).
 5. **Loop until clean** — the heart of the rigor (see next section).
 6. **Ship-gate** — a final judgment agent emits a structured `ShipVerdict` (see *Contracts* below).
 
@@ -131,6 +135,11 @@ and on hitting the cap return a `blocked` verdict listing residuals — **never 
   integration / e2e / contract tests (and for UI surfaces: build + a boot/route smoke check — the browser
   MCP is available). If the environment can't bring a suite up (e.g. Docker services), mark it
   **skipped-and-why** — reporting green on a skipped gate is a lie the verdict must never tell.
+- **Deliberate simplifications are surfaced, never silent.** After the loop, the gate harvests the `ponytail:`
+  shortcut markers into a debt ledger on the `ShipVerdict` (`simplifications`) — each with its ceiling and
+  upgrade trigger, any marker with no trigger flagged as a rot risk. This is *accepted* debt: it does **not**
+  gate the exit (a clean run still ships with it listed), it just keeps a deferral from quietly becoming
+  permanent. Same honesty as skipped-and-why gates, applied to code shortcuts.
 
 ## Stage 3 — confirm-first close-out
 
@@ -173,7 +182,9 @@ docs, an MCP), and the review stack — **`workflow-review-phase`**, **`thermo-n
 and the **`/code-review`** engine it reproduces. Everything else from the ecosystem (superpowers, cc-sdd,
 Pocock's `tdd`/`diagnosing-bugs`, Pact/Specmatic) is **detect-and-use-if-present**, never installed —
 over-skilling bloats every session's context and causes mis-triggering. Patterns we liked (spec-coverage
-reconcile, EARS, contract-first, repro→root-cause debugging) are *encoded here*, not pulled in as skills.
+reconcile, EARS, contract-first, repro→root-cause debugging, and [`ponytail`](https://github.com/DietrichGebert/ponytail)'s
+YAGNI/lean-build ladder + its deliberate-simplification ledger) are *encoded here* — the `yagni` review lens,
+the lazy-build clause in Implement, and the `ponytail:`-marker harvest — **not** pulled in as skills.
 
 ## Reference files
 

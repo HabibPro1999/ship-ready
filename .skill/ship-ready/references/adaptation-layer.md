@@ -40,7 +40,7 @@ Precedence, applied per target: **config file → auto-detect → ask only on ge
   "ci": [".github/workflows/ci.yml"],               // source of truth for the above
   "conventions": ["CLAUDE.md", "packages/orders/CLAUDE.md", ".eslintrc.cjs", ".prettierrc"],
   "surfaces": ["api", "db"],                          // drives the lens set
-  "lenses": ["bugs", "claude-md", "security", "concurrency", "api-contract", "git-history"],
+  "lenses": ["bugs", "claude-md", "security", "concurrency", "yagni", "api-contract", "git-history"],
   "preflightWarnings": ["imports ./orders.service (file absent)", "build needs tsconfig.build.json (absent)"]
 }
 ```
@@ -130,7 +130,7 @@ not a prompt to invent issues.
 
 | Surface | Add these lenses | Add these gates |
 |---|---|---|
-| *(base, always)* | `bugs`, `claude-md`, `security`, `concurrency`, `git-history`, `prior-prs`, `code-comments` | typecheck, lint, format, unit |
+| *(base, always)* | `bugs`, `claude-md`, `security`, `concurrency`, `yagni`, `git-history`, `prior-prs`, `code-comments` | typecheck, lint, format, unit |
 | `api` | `api-contract` (request/response shape, status codes, versioning, back-compat) | contract tests if present |
 | `ui` | `a11y` (labels, roles, focus, contrast), `visual/state` (loading/empty/error states) | build + boot/route smoke (browser MCP) |
 | `db` | `data-integrity` (migrations reversible, constraints, nullability, index impact) | integration if present |
@@ -142,6 +142,18 @@ not a prompt to invent issues.
 Scale the roster to the diff: a tiny change runs a subset (`bugs`, `claude-md`, plus the one relevant
 surface lens); a large/risky change runs the full applicable set, optionally doubling `bugs` and taking the
 union.
+
+The **`yagni`** lens is ship-ready-defined (not in the roster file). It reviews the diff for over-engineering
+*only* — correctness/security/perf are out of scope (other lenses own those) — and is deletion-biased: its best
+outcome is a shorter diff. One line per finding, tagged: `delete:` (dead code, speculative feature — replaced by
+nothing), `stdlib:` (hand-rolled what the standard library ships — name the function), `native:` (a dependency or
+app-code doing what the platform/framework already does — `<input type=date>` over a picker lib, `Intl` over
+moment, a DB constraint over app code), `yagni:` (an abstraction with one implementation, config nobody sets, a
+layer with one caller — inline it until a second caller exists), `shrink:` (same logic, fewer lines — show the
+short form). End with `net: −<N> lines possible`; nothing to cut ⇒ `Lean already.` Never flag the one runnable
+check a `ponytail:` shortcut leaves behind — that's the minimum, not bloat. (Pattern adapted from
+[`ponytail`](https://github.com/DietrichGebert/ponytail) `ponytail-review`; encoded as a lens, not pulled in as a
+skill — it pairs with the `ponytail:` markers the Implement phase leaves and the ledger the gate harvests.)
 
 **Two review emphases worth making explicit** (they recur and are easy to under-specify):
 

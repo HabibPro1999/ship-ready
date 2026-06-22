@@ -176,6 +176,12 @@ happens once, in the Workflow), and it folds the spirit of his `tdd` (red-green-
 `diagnosing-bugs` (reproduce → root-cause → regression-test) loops directly into the implement and review
 stages instead of pulling them in as separate skills. Credit where due — go star his repo.
 
+It also borrows from **[ponytail](https://github.com/DietrichGebert/ponytail)** ("the laziest senior dev in
+the room") — again *encoded, not bundled*: its YAGNI ladder becomes the lazy-build clause in the Implement
+phase, its over-engineering review becomes the `yagni` lens, and its `ponytail:` shortcut marker + debt ledger
+become a `simplifications` field on the `ShipVerdict` so deliberate, accepted shortcuts get tracked instead of
+silently rotting.
+
 ## License
 
 [MIT](LICENSE)
