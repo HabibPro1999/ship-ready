@@ -1,7 +1,7 @@
 ---
 name: assay
 description: >-
-  Turn any unit of work — a freeform feature request OR a Jira/Linear/GitHub issue — into assay,
+  Turn any unit of work — a freeform feature request OR a Jira/Linear/GitHub issue — into shippable, assayed,
   reviewed, tested code with no bugs and no tech debt. Grill requirements to zero ambiguity and detect the
   project (stack/commands/conventions) at intake, then run one autonomous Workflow: plan, research, implement,
   converge on correctness+completeness behind a machine gate, take ONE advisory maintainability pass, and emit
