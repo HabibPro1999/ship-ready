@@ -107,13 +107,17 @@ const OPEN_QUESTION = { type:'object', additionalProperties:false, required:['qu
   options:{type:'array',items:{type:'string'}}, recommendation:{type:'string'},
   blocking:{type:'boolean'} } }     // blocking ⇒ irreversible / product-semantic / security-data-money ⇒ stop and ask
 
-// Plan output: the AC→test map (completeness contract) + derived contracts + any blocking unknowns surfaced while planning.
+// Plan output: the AC→test map (completeness contract) + derived contracts + rejected constructs (design-altitude YAGNI) + any blocking unknowns.
 const PLAN = { type:'object', additionalProperties:false, required:['plan','acMap'], properties:{
   plan:{type:'string'},
   acMap:{ type:'array', items:{ type:'object', additionalProperties:false, required:['ac','test'], properties:{
     ac:{type:'string'}, test:{type:'string'}, untestable:{type:'boolean'} } } },
   contracts:{ type:['array','null'], items:{type:'object', additionalProperties:true} },
   sequence:{ type:['array','null'], items:{type:'object', additionalProperties:true} },
+  // design-altitude YAGNI: constructs the plan DELIBERATELY did not add. `rung` (optional) = which ladder rung stopped it
+  // (1 = needn't exist, 2 = already in the codebase; 3-7 when stdlib/native/dep/one-line logic justifies not adding it).
+  rejected:{ type:['array','null'], items:{ type:'object', additionalProperties:false, required:['construct','reason'], properties:{
+    construct:{type:'string'}, reason:{type:'string'}, rung:{ enum:[1,2,3,4,5,6,7] } } } },
   openQuestions:{ type:'array', items: OPEN_QUESTION } } }
 
 // Implement result = FIXED + any mid-build open questions the implementer hit.
@@ -451,6 +455,15 @@ const plan = await aretry(
   `Read the PRD at ${prdPath}. Produce the implementation plan for ${targets.map(t=>t.name)}. Conform to each `
 + `repo's conventions (mirror the sibling modules named in its profile; the CODE is the convention oracle — `
 + `if CLAUDE.md conflicts with the prevailing code pattern, follow the code and note the doc drift). `
++ `LAZY DESIGN (design-altitude YAGNI — the SHAPE of the solution, not yet the code): challenge every NEW construct `
++ `the plan introduces — module, abstraction, class, endpoint, table, dependency, caching/queue/indirection layer, `
++ `feature flag. For each, stop at the first rung that applies: (1) does it need to exist to satisfy an AC, or can an `
++ `existing path absorb it? (2) does something in THIS codebase already do it — reuse and extend a sibling (name the `
++ `file/symbol) rather than rebuild a peer; add no new dependency you don't need. Record every construct you decided `
++ `NOT to add in \`rejected\` (construct, reason naming the existing path that absorbs it, and the rung that stopped it). `
++ `The construction rungs (stdlib → native → installed dep → one line) belong to Implement. The acMap is the FLOOR: `
++ `never design away anything an acceptance criterion, validation, error path, or security control requires `
++ `(lazy about the solution, never about correctness). `
 + (multiRepo ? `Freeze the cross-target contracts ${JSON.stringify(contracts)} and the dependency sequence first. ` : ``)
 + `CRITICAL: map EACH acceptance criterion (AC id) to at least one concrete test assertion to write in Implement; `
 + `where the stack genuinely cannot assert a criterion, mark it untestable (the ship-gate will judge it). `
@@ -528,6 +541,9 @@ for (let i=0;i<POLISH;i++){
   const perRepo = await parallel(targets.map(t => () => aretry(
     `Invoke Skill({ skill:'thermo-nuclear-code-quality-review' }) and apply the \`yagni\` lens to the FULL diff in `
   + `${t.repoPath}: find over-engineering/duplication to DELETE (delete/stdlib/native/yagni/shrink; net −lines). `
+  + `GUARDRAIL (ponytail's non-negotiable): a deletion counts only if it removes NO behavior the code needs — never `
+  + `propose deleting a validation, error path, security/authz control, or AC-required behavior for fewer lines; if a `
+  + `candidate drops a guard you cannot show is re-established elsewhere, it is OUT OF SCOPE, not a finding. `
   + `ALSO run the \`efficiency\` lens: flag wasted work the diff introduces: redundant computation or repeated I/O, `
   + `independent operations run sequentially, blocking work added to startup or hot paths. Also flag long-lived objects `
   + `built from closures or captured environments — they keep the entire enclosing scope alive for the object's lifetime `
@@ -549,7 +565,9 @@ for (let i=0;i<POLISH;i++){
   const qa = await aretry(`Triage ${JSON.stringify(allQ)}: accept only cheap, clearly-worth-it cleanups (obvious DRY extractions, `
   + `a sequential pair trivially made concurrent, a closure leak with a one-line fix). Each kept item must name its concrete cost `
   + `(what is duplicated/wasted/leaked, or the exact CLAUDE.md rule broken) — drop vague ones. A \`conventions\` item with no exact `
-  + `quoted rule is noise: reject it. Everything else is deferred, not rejected. Findings:\n${JSON.stringify(allQ)}`,
+  + `quoted rule is noise: reject it. REJECT outright any deletion that removes a validation/error-path/security control/`
+  + `AC-required behavior — tier-0 green is necessary but NOT sufficient to justify removing a guard. `
+  + `Everything else is deferred, not rejected. Findings:\n${JSON.stringify(allQ)}`,
     { label:'polish:triage', phase:'Polish', model:'sonnet', effort:'medium', schema: TRIAGE })
   const acc = (qa&&qa.accepted)||[]
   if (acc.length) for (const t of targets) await aretry(`Apply any of these cheap cleanups that belong to ${t.repoPath}, then run \`${t.profile.commands.verify}\` (must stay tier-0 green). Do NOT commit. ${JSON.stringify(acc)}`,

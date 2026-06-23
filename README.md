@@ -207,10 +207,13 @@ happens once, in the Workflow), and it folds the spirit of his `tdd` (red-green-
 stages instead of pulling them in as separate skills. Credit where due — go star his repo.
 
 It also borrows from **[ponytail](https://github.com/DietrichGebert/ponytail)** ("the laziest senior dev in
-the room") — again *encoded, not bundled*: its YAGNI ladder becomes the lazy-build clause in the Implement
-phase, its over-engineering review becomes the `yagni` lens, and its `ponytail:` shortcut marker + debt ledger
-become a `simplifications` field on the `ShipVerdict` so deliberate, accepted shortcuts get tracked instead of
-silently rotting.
+the room") — again *encoded, not bundled*: its YAGNI ladder splits by altitude — the necessity/reuse rungs
+run as a lazy-design pass in Plan (recording the constructs it refused to add in a `rejected` list), and the
+construction rungs (stdlib → native → dep → one line) stay as the lazy-build clause in Implement; its
+over-engineering review becomes the `yagni` lens — bound by ponytail's non-negotiable guardrail (a deletion may
+never strip a validation, error path, security control, or required behavior just to cut lines) — and its
+`ponytail:` shortcut marker + debt ledger become a `simplifications` field on the `ShipVerdict` so deliberate,
+accepted shortcuts get tracked instead of silently rotting.
 
 ## License
 
