@@ -1,7 +1,7 @@
 ---
-name: ship-ready
+name: assay
 description: >-
-  Turn any unit of work — a freeform feature request OR a Jira/Linear/GitHub issue — into ship-ready,
+  Turn any unit of work — a freeform feature request OR a Jira/Linear/GitHub issue — into assay,
   reviewed, tested code with no bugs and no tech debt. Grill requirements to zero ambiguity and detect the
   project (stack/commands/conventions) at intake, then run one autonomous Workflow: plan, research, implement,
   converge on correctness+completeness behind a machine gate, take ONE advisory maintainability pass, and emit
@@ -13,7 +13,7 @@ description: >-
 disable-model-invocation: true
 ---
 
-# ship-ready
+# assay
 
 Turn a unit of work into code you'd actually merge — correct, tested, reviewed, idiomatic, and complete
 against its acceptance criteria — without a human babysitting the middle, and **without the loop burning
@@ -46,6 +46,21 @@ Two things changed from the obvious design, both because a real run proved them 
 
 Depth lives in `references/` — read the one for the stage you're in.
 
+## Requirements & degraded fallback
+
+Stage 2 runs as a Claude Code **Workflow** (the `agent()`/`parallel()`/`pipeline()`/`phase()` primitives), which
+requires **Claude Code ≥ 2.1.154 on a paid plan**. The skills install from the bundle's `.skill/` into the
+auto-discovered `~/.claude/skills/` (`cp -R .skill/* ~/.claude/skills/`) — the model can't load them from `.skill/`
+in place. **Context7** (an MCP, for Research) and **`/code-review`** (ships with Claude Code) are also expected.
+
+If the Workflow tool is unavailable (older CLI, free plan), **degrade — don't fail**: drive the same
+Plan → Research → Implement → converge → polish → ship-gate flow from a single top-level `Agent`-tool orchestrator
+that spawns the review fan-out itself (nested subagents shipped in **v2.1.172**, 5-level limit) and invokes
+thermo-nuclear directly. You lose the *script-decided* exit (a model judges "converged" instead of the harness), so
+say which path ran in the verdict — but the work still ships. (The phase-agent-can't-nest constraint that motivates
+the script-level `parallel()` fan-out applies *inside* a Workflow; the top-level Agent fallback **can** nest, which
+is exactly why it works.)
+
 ## Non-negotiable: grill first
 
 **Always run `grill-me` before anything else** — it is the load-bearing reason the rest can be autonomous. A
@@ -57,7 +72,7 @@ Skill({ skill: 'grill-me' })
 ```
 
 `grill-me` runs a `/grilling` session under the hood; it's normally-invocable, so call it via the Skill tool.
-(ship-ready itself is `disable-model-invocation`: the **user** starts it with `/ship-ready`.) Seed it with
+(assay itself is `disable-model-invocation`: the **user** starts it with `/assay`.) Seed it with
 everything you know (ticket body, request, repo scan) so it targets real gaps. It self-scales. It must nail:
 **scope**, **the target set** (which repos/services, each with a local path), **repo integrity** (does each
 target build *today* — missing imports/config are in-scope work, not gate surprises), the **contracts** between
@@ -120,11 +135,15 @@ again.** What makes it converge fast *and* without waste:
   **only the files the last fix changed**, with **only the lenses whose surface those files touch.** (A DRY-only
   fix re-runs no security/data reviewers.) Review is `parallel()` in the script; thermo-nuclear is **not** in
   this loop (it's Mechanism B).
-- **Reality-anchored lenses only.** `bugs` and `test-integrity` always; `api-contract`/`security`/`data-integrity`/
-  `concurrency`/`infra-safety` surface-gated; `a11y`/`visual-state`/`public-api` on the matching surface;
-  `git-history` only on modified pre-existing code; `integration` across targets when multi-repo. The
-  artifact-anchored lenses are gone from the gate (see *Guardrails*). Every emitted lens key is defined once in
-  the script's `LENS_DEF` registry, so the review prompt carries real oracle guidance, not a bare adjective.
+- **Reality-anchored lenses only.** The five `/code-review` correctness angles `angle-A`…`angle-E` and
+  `test-integrity` are the always-on core (every pass, every target, every lap); `security`/`data-integrity`/
+  `concurrency`/`infra-safety`/`api-contract`/`public-api` are SMART-selected by a static surface/`fileLensMap`
+  **floor** (fail-safe) UNION a cheap **lens-router** that may only ADD to the floor, never remove; `public-api`
+  on the library surface; `integration` across targets when multi-repo. `a11y`/`visual-state`/`git-history` are
+  cut entirely (`angle-B` owns git-history's removed-behavior job); the artifact-anchored lenses are gone from the
+  gate (see *Guardrails*). The A–E angles live in the `CORRECTNESS_ANGLES` registry (verbatim from the engine) and
+  the specialist keys in `LENS_DEF`, so the review prompt carries real oracle guidance, not a bare adjective. After
+  the finders, a 3-state recall-biased verify drops only REFUTED candidates before triage.
 - **Incremental triage with memory.** A `disposed` cache carries verdicts across passes; **only new findings
   reach triage.** This stops the loop re-litigating the same nits (and re-accepting a finding it earlier
   rejected). **Triage is the gate** — keyed off `accepted == 0`, never a confidence score.
@@ -139,8 +158,11 @@ again.** What makes it converge fast *and* without waste:
 
 ### Mechanism B — the advisory polish pass (one, non-blocking)
 
-After A is green, run maintainability **once**: thermo-nuclear + `yagni`/simplify on the full diff, plus a
-**doc-drift** check (CLAUDE.md/comments the code now contradicts — the code is right, the doc is stale). Apply
+After A is green, run maintainability **once**: thermo-nuclear + `yagni`/simplify on the full diff, plus
+`efficiency` (wasted work / repeated I/O / sequential-independent ops / hot-path-blocking / closure-capture memory
+leaks), a reverse-direction **doc-drift** check (CLAUDE.md/comments the code now contradicts — the code is right,
+the doc is stale), and a forward-direction **conventions** check (code that breaks a quoted exact CLAUDE.md rule;
+advisory only, never gates, consistent with `claude-md` being cut from the gate). Apply
 the cheap, obviously-worth-it cleanups (DRY extractions), re-verify tier-0, and **roll everything else into an
 advisory ledger** on the verdict: the `ponytail:` markers (with ceiling + upgrade trigger), deferred findings,
 and drift notes. This is **accepted, tracked debt** — it does not gate the exit (a clean run ships with it
@@ -160,6 +182,12 @@ Choose each phase's model/effort by **stakes × complexity × blast-radius**; th
 ship-gate) → top tier; implement → top tier (codegen is the product); fix/research → mid; gate/re-verify/stage →
 cheap. Escalate mid-loop if signal demands it.
 
+**Cheap mode for small tasks.** assay is a heavyweight orchestrator; a real unit of work can run into the
+millions of tokens. Cost already scales down on its own for small single-repo changes (surface-gating runs fewer
+specialists; delta laps shrink), but for a low-blast-radius task you can also drop the whole tier prior a notch —
+a one-file change doesn't need an Opus triage every lap. Reserve the heavy tiers for genuine blast-radius, and
+steer one-line edits to a plain prompt rather than this skill.
+
 ## Guardrails (load-bearing — keep them)
 
 - **Grill first, always.** No skipping to implementation, however clear the request looks.
@@ -169,11 +197,13 @@ cheap. Escalate mid-loop if signal demands it.
   findings never re-enter. The strongest agent decides; a score floor lets the weakest silently kill a real one.
 - **Review the delta, not the world.** After pass 1, review only what the last fix changed, with only the
   surface-relevant lenses. Re-scanning unchanged code is the single biggest measured waste.
-- **A lens is only as good as its oracle.** Keep lenses that judge the code against execution semantics
-  (`bugs`/`api-contract`/`security`/`data-integrity`/`concurrency`). Drop the ones anchored on lagging artifacts:
-  `prior-prs` (unrelated/hallucinated in a team), `code-comments` (comments rot), and `claude-md` *as a gate*
-  (docs lag the code). Enforce conventions by **prevention** (Implement mirrors the sibling code; code wins over
-  CLAUDE.md); surface doc/comment **drift** as an advisory note, not a finding.
+- **A lens is only as good as its oracle.** Keep lenses that judge the code against execution semantics (the
+  `angle-A`…`angle-E` correctness core / `api-contract`/`security`/`data-integrity`/`concurrency`). Drop the ones
+  anchored on lagging artifacts: `prior-prs` (unrelated/hallucinated in a team), `code-comments` (comments rot),
+  and `claude-md` *as a gate* (docs lag the code); `a11y`/`visual-state`/`git-history` are cut entirely. Enforce
+  conventions by **prevention** (Implement mirrors the sibling code; code wins over CLAUDE.md); surface
+  reverse-direction doc/comment **drift** and forward-direction `conventions` (quote-the-exact-rule) as advisory
+  Mechanism-B notes, never gate findings.
 - **Completeness is test-backed — and the tests are audited.** Each AC has ≥1 tagged assertion; the gate runs
   them. Because the same agent writes the code *and* the test, a `test-integrity` lens checks each `@AC` test
   actually exercises its criterion (a tautology becomes a triage finding), and the `untestable`-AC ratio is
@@ -195,7 +225,9 @@ cheap. Escalate mid-loop if signal demands it.
 
 Hard dependencies, all present: **`grill-me` + `grilling`** (the interview), **Context7** (library docs, an MCP),
 and the review stack — **`workflow-review-phase`** (the spliced review→triage→fix interior),
-**`thermo-nuclear-code-quality-review`** (Mechanism B), and the **`/code-review`** engine it reproduces.
+**`thermo-nuclear-code-quality-review`** (Mechanism B), and the CURRENT **`/code-review`** angles (A–E) + 3-state
+recall-biased verify, which Mechanism A MIRRORS at the script level (source of truth:
+`workflow-review-phase/references/code-review-engine-2.1.186.md`).
 Everything else (superpowers, cc-sdd, Pocock's `tdd`/`diagnosing-bugs`, Pact/Specmatic) is
 **detect-and-use-if-present**, never installed. Patterns we liked are *encoded here, not pulled in as skills*:
 spec-coverage reconcile, EARS, contract-first, repro→root-cause debugging, and
@@ -207,7 +239,7 @@ spec-coverage reconcile, EARS, contract-first, repro→root-cause debugging, and
 - `references/intake-and-spec.md` — grill-me handoff, ticket adapters, **ProjectProfile detection at intake**,
   PRD synthesis (pure-WHAT, `.prd/<slug>.md`), EARS criteria + **AC→test mapping**, confirm-first write-back.
 - `references/adaptation-layer.md` — project detection, CI-as-ground-truth, the **oracle-reliability lens ranking**,
-  the surface→lens map, `cmdExists`/tiered gates, and the optional `.claude/ship-ready.json` cache.
+  the surface→lens map, `cmdExists`/tiered gates, and the optional `.claude/assay.json` cache.
 - `references/canonical-workflow.md` — the v2 Workflow template: CONFIG + frozen mechanism, schemas, **Mechanism A
   (converge) and B (polish)**, the disposition cache, delta-scoping, the mechanical gate, and the model-tier prior.
 - `references/multi-repo-contracts.md` — the WorkGraph, contract-first two-level planning, per-target fan-out, the

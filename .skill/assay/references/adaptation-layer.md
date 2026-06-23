@@ -1,6 +1,6 @@
 # Adaptation Layer
 
-This is what makes ship-ready *universal*: nothing downstream hardcodes a stack — the plan, the gates, and the
+This is what makes assay *universal*: nothing downstream hardcodes a stack — the plan, the gates, and the
 review lenses are all functions of a detected `ProjectProfile`.
 
 **Where detection runs (v2): at intake, inline — not as a Workflow phase.** The inline agent is already reading
@@ -14,7 +14,7 @@ Precedence, per target: **config file → auto-detect → ask only on genuine am
 ## Table of contents
 
 1. [The ProjectProfile](#1-the-projectprofile) — what intake produces and inlines
-2. [Config file (first)](#2-config-file-first) — `.claude/ship-ready.json`
+2. [Config file (first)](#2-config-file-first) — `.claude/assay.json`
 3. [Auto-detect (default)](#3-auto-detect-default) — stack, commands, `cmdExists`, conventions, surfaces
 4. [The lens roster](#4-the-lens-roster) — oracle-reliability, what earns its place, what's cut
 5. [Tiered gates](#5-tiered-gates) — the mechanical, N/A-aware gate + test-backed completeness
@@ -43,10 +43,10 @@ Precedence, per target: **config file → auto-detect → ask only on genuine am
   "ci": [".github/workflows/ci.yml"],               // source of truth for the commands above
   "conventions": "mirror packages/orders + the providers contract; the CODE wins over CLAUDE.md on conflict",
   "surfaces": ["api", "db"],                          // drives the lap-1 lens set
-  "fileLensMap": [                                    // delta laps: changed-file path-substr → lenses to re-run
+  "fileLensMap": [                                    // delta laps: changed-file path-substr → SPECIALIST lenses to re-run
     ["controller", ["api-contract", "security"]], ["schema", ["data-integrity"]],
-    ["migration", ["data-integrity"]], ["test", ["test-integrity"]], ["spec", ["test-integrity"]], ["", ["bugs"]]
-  ],
+    ["migration", ["data-integrity"]], ["async", ["concurrency"]], ["txn", ["concurrency"]]
+  ],                                                  // A–E + test-integrity are the always-on core (the floor adds them); no '' catch-all
   "buildsClean": true,                                // did the tree typecheck BEFORE our change?
   "preflightWarnings": ["imports ./orders.service (file absent)", "build needs tsconfig.build.json (absent)"]
 }
@@ -64,12 +64,12 @@ work must create. Empty/clean is the happy path; otherwise "this doesn't build a
 
 ## 2. Config file (first)
 
-If `.claude/ship-ready.json` exists at a target's root, **trust it** — it pins commands, lenses, surfaces,
+If `.claude/assay.json` exists at a target's root, **trust it** — it pins commands, lenses, surfaces,
 and a definition-of-done, overriding detection. It makes runs deterministic and fast. Shape mirrors the
 `commands` / `surfaces` / `lenses` blocks above, plus an optional `definitionOfDone` note.
 
-ship-ready maintains this as a **write-through cache**: after a first successful detection, offer to write
-the resolved profile to `.claude/ship-ready.json` so the next run skips detection (and so a human can
+assay maintains this as a **write-through cache**: after a first successful detection, offer to write
+the resolved profile to `.claude/assay.json` so the next run skips detection (and so a human can
 correct it once instead of every run). Never write it without asking — it lands in the user's repo.
 
 ## 3. Auto-detect (default)
@@ -114,12 +114,15 @@ plus `.editorconfig`, the lint config (eslint/biome/ruff/clippy/golangci-lint), 
 (prettier/black/rustfmt/`dart format`/gofmt), and commit conventions (`commitlint`, a `CONTRIBUTING.md`).
 These feed the **implement phase** (write code that matches) — convention-following is *prevention*, not a gate
 lens. Any doc/comment **drift** the code later contradicts surfaces as an advisory note in Mechanism B, never as
-a blocking finding (the `claude-md` lens is cut from the gate — see §4).
+a blocking finding (the `claude-md` lens is cut from the gate — see §4). The forward-direction `conventions` lens
+re-enters ONLY as an advisory Mechanism-B lens (quote the exact CLAUDE.md rule; never gates), the mirror of the
+reverse-direction `doc-drift`.
 
 ### Surfaces
 Infer the work's surfaces from dependencies + directory shape — they decide the lenses and the UI gates:
 
-- **UI deps** (React/Vue/Svelte/Angular/SwiftUI/Jetpack Compose/**Flutter**) → `ui` surface.
+- **UI deps** (React/Vue/Svelte/Angular/SwiftUI/Jetpack Compose/**Flutter**) → `ui` surface (drives the tier-2
+  build + boot/route smoke GATE only; it adds no Mechanism-A review lens — `a11y`/`visual-state` are cut).
 - **Routes / controllers / GraphQL / OpenAPI / gRPC** → `api` surface.
 - **Migrations / ORM / raw SQL** → `db` surface.
 - **Dockerfile / k8s / terraform / pulumi** → `infra` surface.
@@ -143,8 +146,7 @@ A review lens checks the code against *some oracle*. **A lens is only as reliabl
 
 | Lens | Oracle | Reliability |
 |---|---|---|
-| `bugs`, `api-contract`, `security`, `data-integrity`, `concurrency` | **the code + execution semantics** (does it actually break / leak / race) | high — the oracle *is* reality |
-| `git-history` | `git blame` (factual, but only meaningful on **modified** code) | medium |
+| `angle-A`…`angle-E` (correctness core), `api-contract`, `security`, `data-integrity`, `concurrency` | **the code + execution semantics** (does it actually break / leak / race) | high — the oracle *is* reality |
 | `claude-md` | a doc that **lags** the code | drift-prone |
 | `code-comments` | inline comments that **rot silently** | most drift-prone |
 | `prior-prs` | external PR threads it usually can't read → **hallucinated** | lowest |
@@ -153,28 +155,37 @@ The bottom three share one failure mode: they trust a written artifact that drif
 false-flag correct code that contradicts a stale rule. So the **gate roster is the reality-anchored set**, and
 convention-following moves to *prevention*:
 
-| Bucket | Lenses | When (lap-1) |
+| Bucket | Lenses | When |
 |---|---|---|
-| **Core** (change-intrinsic) | `bugs`; `test-integrity`; `api-contract` | `bugs`+`test-integrity` always; `api-contract` if `api` |
-| **Insurance** (surface-gated, high blast-radius) | `security`, `data-integrity`, `concurrency`, `infra-safety` | auth/money/public · db/migration · txn/async · infra surfaces |
-| **Conditional** | `git-history` | only on hunks that **modify pre-existing** code |
-| **UI / library** | `a11y`+`visual-state` · `public-api` | the matching surface |
+| **Correctness core** (always-on) | `angle-A`…`angle-E` (the five `/code-review` technique angles, verbatim) | EVERY pass, EVERY target, every lap — replaces the old vague `bugs` lens |
+| **Completeness core** (always-on) | `test-integrity` | always (completeness is always gated) |
+| **Specialists** (SMART-selected) | `security`, `data-integrity`, `concurrency`, `infra-safety`, `api-contract`, `public-api` | the static **floor** (surface/`fileLensMap`) UNION the cheap **lens-router**'s ADD-only picks; the router may only ADD, never remove from the floor; selection is NOT gating |
 | **Multi-repo** | `integration` (cross-target contract conformance) | spans ≥2 targets |
-| **Polish (advisory, Mechanism B — never gates)** | `thermo-nuclear`, `yagni`, `doc-drift` | once, after convergence |
+| **Polish (advisory, Mechanism B — never gates)** | `thermo-nuclear`, `yagni`, `efficiency`, `doc-drift` (reverse) + `conventions` (forward) | once, after convergence |
 
-**Lap 2+ runs only the lenses the fix's surface touches** (via `fileLensMap`); a DRY-only fix re-runs none of
-the insurance lenses. A lens earns its place by **(blast-radius of a miss) × (oracle reliability)** — that's why
-`security` stays even at zero findings (catastrophic, reliable) while the artifact-anchored lenses go.
+**Lap 2+ still runs the always-on A–E core + `test-integrity`, plus only the specialists the fix's surface
+touches** (via `fileLensMap`) UNION the router's ADD-only picks; a DRY-only fix re-runs none of the insurance
+specialists. A–E's `angle-C` (cross-file) overlaps `api-contract`/`public-api` and `angle-B` (removed-behavior)
+covers the "this diff dropped a guard" job; the overlap is intentional — triage's `dispKey` dedup absorbs the
+double-reports, so do NOT delete a specialist to avoid overlap. A lens earns its place by **(blast-radius of a
+miss) × (oracle reliability)** — that's why `security` stays even at zero findings (catastrophic, reliable) while
+the artifact-anchored lenses go.
 
 **Cut from the gate (and why):**
-- **`prior-prs`** — weak premise in a team (unrelated PRs), unreadable/hallucinated guidance, overlaps
-  `git-history`/`claude-md`, cheap miss.
+- **`prior-prs`** — weak premise in a team (unrelated PRs), unreadable/hallucinated guidance, overlaps the
+  removed-behavior angle (`angle-B`) and `claude-md`, cheap miss.
 - **`code-comments`** — the oracle rots; its reliable signal (explicit live invariants like "must hold the lock")
-  overlaps `bugs`/`concurrency`. Fold that one line into `bugs`; don't run it as a lens.
+  overlaps the correctness angles (`angle-A`…`angle-E`) and `concurrency`. Fold that one line into the always-on
+  angles; don't run it as a lens.
 - **`claude-md` as a gate** — docs lag the code. The genuinely-hard rules ("money in millimes", "audit in the
   same tx") are caught by the *code-anchored* lenses checking actual behavior anyway. So enforce conventions by
   **prevention** (Implement mirrors the sibling code; **the code wins over CLAUDE.md on conflict**), and surface
-  any **doc/comment drift** as an advisory ledger note in Mechanism B — never a blocking finding.
+  any **doc/comment drift** as an advisory ledger note in Mechanism B — never a blocking finding. A forward-direction
+  `conventions` lens (quote-the-exact-rule) re-enters ONLY as an advisory Mechanism-B lens writing a `convention-gap`
+  ledger note — it never gates; `prior-prs` and `code-comments` stay fully cut.
+  *(This is a deliberate, contestable tradeoff. A team that holds CLAUDE.md authoritative can promote the forward
+  `conventions` lens to a gate finding instead of a ledger note — assay's default keeps it advisory because
+  docs lag code, but the knob is there for shops that enforce conventions by policy.)*
 
 **The `yagni` lens (Mechanism B, advisory):** reviews the diff for over-engineering *only* and is
 deletion-biased. Tags: `delete:` (dead/speculative), `stdlib:` (hand-rolled what the stdlib ships — name it),
@@ -183,6 +194,23 @@ moment, a DB constraint over app code), `yagni:` (an abstraction with one caller
 logic, fewer lines). End `net: −<N> lines`; nothing to cut ⇒ `Lean already.` Never flag the one check a
 `ponytail:` shortcut leaves behind. (From [`ponytail`](https://github.com/DietrichGebert/ponytail) — encoded,
 not bundled; pairs with the `ponytail:` markers and the ledger.)
+
+**The `efficiency` lens (Mechanism B, advisory):** flags wasted work the diff introduces — redundant computation
+or repeated I/O, independent operations run sequentially, blocking work added to startup or hot paths — and
+**closure-capture leaks**: long-lived objects built from closures/captured environments keep the entire enclosing
+scope alive for the object's lifetime (a memory leak when that scope holds large values); prefer a class/struct
+that copies only the fields it needs. It names the cheaper alternative and states the concrete cost (what is
+duplicated/wasted/leaked), never a vague crash. This is the one capability the structure-and-deletion lenses
+(thermo + yagni) don't cover. Verbatim from the current `/code-review` `efficiency` cleanup angle.
+
+**The `conventions` lens (Mechanism B, advisory — forward direction):** the mirror of `doc-drift`. `doc-drift` is
+*reverse* (the code is right, a CLAUDE.md rule or comment is stale → record it, the code wins). `conventions` is
+*forward* (the code violates a CLAUDE.md rule that still holds). It reads the governing CLAUDE.md files (user-level,
+repo-root, and any in an ancestor directory of a changed file) and **only flags a violation when it can quote the
+EXACT rule and the exact breaking line** — no style preferences, no "spirit of the doc"; if no CLAUDE.md applies it
+returns nothing. It is **advisory and never gates**, consistent with §4's decision to cut `claude-md` from the gate:
+a quoted-rule violation lands as a `convention-gap` ledger note, never a blocking finding. Verbatim shape from the
+current `/code-review` `conventions (CLAUDE.md)` cleanup angle.
 
 **Two emphases worth keeping explicit:**
 - **"Existing behavior unchanged" ⇒ a regression test, not a note** — fold it into the AC-tagged tests.

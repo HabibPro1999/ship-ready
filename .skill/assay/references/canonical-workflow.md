@@ -1,6 +1,6 @@
 # Canonical Workflow (v2)
 
-The single autonomous Workflow ship-ready launches after the grill. **v2 is a rearchitecture** driven by
+The single autonomous Workflow assay launches after the grill. **v2 is a rearchitecture** driven by
 measured waste on a real run (a 3.7M-token, 2-hour build whose loop re-scanned a clean feature three times).
 The redesign is built on six load-bearing decisions, each tied to evidence:
 
@@ -21,8 +21,10 @@ The redesign is built on six load-bearing decisions, each tied to evidence:
    A `test-integrity` lens audits that each `@AC` test actually *exercises* its criterion (so a tautological
    green can't ship), and the `untestable`-AC ratio is a script-owned guard, not a free escape hatch.
 6. **Reality-anchored lenses.** A lens is only as good as its oracle. Keep the lenses that judge the code
-   against *execution semantics*; cut the ones anchored on lagging artifacts (`prior-prs`, `code-comments`),
-   re-anchor convention-checking from CLAUDE.md to **the sibling code** and move it to *prevention* in Implement.
+   against *execution semantics*; cut the ones anchored on lagging artifacts (`prior-prs`, `code-comments`)
+   and the surface-narrow UI/blame lenses (`a11y`, `visual-state`, `git-history` — `git-history`'s "this diff
+   dropped a guard" job is now owned by always-on `angle-B`); re-anchor convention-checking from CLAUDE.md to
+   **the sibling code** and move it to *prevention* in Implement.
 
 Two safety mechanisms ride on top of the six decisions: a **per-target convergence loop** (Mechanism A runs
 once per target each round, plus a cross-target **integration pass** when `multiRepo` — so a 3-service feature
@@ -37,9 +39,14 @@ autonomous agent that hits a genuinely irreversible/product-semantic unknown sto
 > crash, the `[].every()` trap, the skipped-vs-N/A gate bug, the missing-helper-body footgun).
 > The `review→triage→fix` interior is still **spliced from `workflow-review-phase`** for its schemas
 > (`FINDINGS`/`TRIAGE`/`FIXED`); Mechanism A drives the review with **inline, oracle-anchored prompts from the
-> `LENS_DEF` registry** (so every emitted lens key has guidance without depending on that skill's default
-> roster, which still ships the cut lenses). Keep its two validated mechanics: thermo-nuclear is a real `Skill`
-> call in one phase-agent, code-review is the script's own `parallel()` fan-out (phase-agents can't spawn subagents).
+> `CORRECTNESS_ANGLES` (A–E, verbatim from `/code-review`) + `LENS_DEF` (specialists/completeness) registries**
+> (so every emitted lens key has guidance without depending on that skill's default roster, which still ships
+> the cut lenses). The lens set per pass = a static surface/`fileLensMap` **floor** (fail-safe) UNION a cheap
+> **lens-router**'s ADD-only specialist picks; the router selects reviewers but never decides done-ness. Mechanism
+> A mirrors the CURRENT `/code-review` angles + 3-state recall-biased verify at the script level (source of truth:
+> `../../workflow-review-phase/references/code-review-engine-2.1.186.md`). Keep its two validated mechanics:
+> thermo-nuclear is a real `Skill` call in one phase-agent, code-review is the script's own `parallel()` fan-out
+> (phase-agents can't spawn subagents).
 
 ## Model tiers (a prior — reassess per phase × blast-radius)
 
@@ -49,12 +56,14 @@ autonomous agent that hits a genuinely irreversible/product-semantic unknown sto
 | Plan · per-target | sonnet | Conform to a frozen contract + local conventions. |
 | Research | sonnet (+Context7) | Doc synthesis. |
 | Implement | **opus** | Codegen quality is the product; mirrors sibling code, writes AC tests. |
-| Review · security / data-integrity / concurrency / infra-safety / integration | **opus** | Subtle, high-blast-radius — only on relevant surfaces, lap-1. |
-| Review · bugs / api-contract / git-history / a11y / visual-state / public-api / test-integrity | sonnet | Breadth on the change. |
+| Review · lens-router | sonnet · **low effort** | Cheap ADD-only specialist selector; reads the change, extends the floor, never gates. |
+| Review · angle-A…E (always-on correctness core) / test-integrity | sonnet | A–E technique angles + completeness, every pass, every target, every lap. |
+| Review · api-contract / public-api | sonnet | Surface-gated specialists; breadth on the change. |
+| Review · security / data-integrity / concurrency / infra-safety / integration | **opus** | Subtle, high-blast-radius — floor- or router-selected on the relevant surface. |
 | Triage | **opus** | The gate — decides what changes. Only *new* findings. |
 | Fix | sonnet (escalate on repeated criticals) | Implement a precise finding. |
 | Gate / re-verify / stage | haiku | Runs commands; the **script** computes green. |
-| Polish (thermo + yagni) | sonnet–opus, **once** | Advisory; never loops. |
+| Polish (thermo + yagni + efficiency + doc-drift + conventions) | sonnet–opus, **once** | Advisory; never loops; never gates. |
 | Ship-gate | **opus** | Final judgment + structured verdict. |
 
 ## The lens roster — reality-anchored, surface-gated
@@ -66,17 +75,20 @@ registry** in the script — the docs describe that registry, they don't indepen
 
 | Bucket | Lenses | When |
 |---|---|---|
-| **Core** (change-intrinsic) | `bugs`; `api-contract`; `test-integrity` | `bugs`+`test-integrity` always (completeness is always gated); `api-contract` if `api` surface |
-| **Insurance** (surface-gated, lap-1) | `security`, `data-integrity`, `concurrency`, `infra-safety` | auth/money/public · db/migration · txn/async · infra surfaces |
-| **UI / library** | `a11y`, `visual-state` · `public-api` | the matching surface |
-| **Conditional** | `git-history` | only on hunks that **modify pre-existing** code (blame is meaningless on net-new files) |
+| **Correctness core** (always-on) | `angle-A`…`angle-E` (the five `/code-review` technique angles, verbatim) | EVERY pass, EVERY target, every lap — they replace the old vague `bugs` lens |
+| **Completeness core** (always-on) | `test-integrity` | always (completeness is always gated) |
+| **Specialists** (SMART-selected) | `security`, `data-integrity`, `concurrency`, `infra-safety`, `api-contract`, `public-api` | the static **floor** (surface/`fileLensMap`) UNION the cheap **lens-router**'s ADD-only picks |
 | **Multi-repo** | `integration` (cross-target contract conformance) | spans ≥2 targets — runs once per round, after the per-target passes |
-| **Polish** (advisory, non-gating) | `thermo-nuclear`, `yagni`/`simplify`, `doc-drift` | Mechanism B, once |
+| **Polish** (advisory, non-gating) | `thermo-nuclear`, `yagni`, `efficiency`, `doc-drift` (reverse) + `conventions` (forward) | Mechanism B, once |
+| **Cut entirely** | ~~`git-history`~~, ~~`a11y`~~, ~~`visual-state`~~ | removed everywhere — `angle-B` (removed-behavior) absorbs git-history's "this diff dropped a guard" job |
 | **Cut from the gate** | ~~`prior-prs`~~, ~~`code-comments`~~, ~~`claude-md`~~ | weak/rotting oracle — see below |
 
 Convention-following is handled by **prevention** (Implement mirrors the sibling code; CLAUDE.md is a hint and
 **the code wins on conflict**), and doc/comment **drift** is surfaced as an advisory ledger note in Mechanism B
-— never as a blocking gate finding.
+— never as a blocking gate finding. `efficiency` adds the one quality-clock capability gap thermo+yagni don't
+cover (wasted work, sequential-independent ops, hot-path-blocking, closure-capture memory leaks); `conventions`
+is the forward pair to `doc-drift` — it flags code that breaks a **quoted exact** CLAUDE.md rule, advisory only,
+consistent with `claude-md` being banned from the gate but allowed as a note.
 
 ## Schemas
 
@@ -126,7 +138,7 @@ const GATE_RESULT = { type:'object', additionalProperties:false, required:['targ
 const LEDGER = { type:'object', additionalProperties:false, required:['markers'], properties:{
   markers:{ type:'array', items:{ type:'object', additionalProperties:false,
     required:['kind','location','note','rotRisk'], properties:{
-      kind:{enum:['ponytail','doc-drift','deferred-finding']},        // shortcut · stale doc/comment · deferred polish
+      kind:{enum:['ponytail','doc-drift','convention-gap','deferred-finding']},  // shortcut · stale doc (code right) · code breaks a quoted CLAUDE.md rule · deferred polish
       location:{type:'string'}, note:{type:'string'},
       ceiling:{type:['string','null']}, upgrade:{type:['string','null']}, rotRisk:{type:'boolean'} } } } } }
 
@@ -158,7 +170,7 @@ run ships with it listed). It only keeps a deferral from silently becoming perma
 
 ```js
 export const meta = {
-  name: 'ship-ready',
+  name: 'assay',
   description: 'Autonomous delivery: plan → research → implement → converge → polish → ship-gate',
   phases: [
     { title: 'Plan' }, { title: 'Research' }, { title: 'Implement' },
@@ -178,8 +190,9 @@ const targets = [
       cmdExists:{ typecheck:true, lint:true, format:false, unit:true, acTests:true, integration:true, contract:false }, // false ⇒ not-applicable
       conventions:'mirror <sibling modules>; the CODE wins over CLAUDE.md on conflict',
       fileLensMap:[ ['controller', ['api-contract','security']], ['schema', ['data-integrity']],
-                    ['migration', ['data-integrity']], ['test', ['test-integrity']], ['spec', ['test-integrity']],
-                    ['', ['bugs']] ],          // path-substr → lenses; '' matches all (always bugs)
+                    ['migration', ['data-integrity']], ['async', ['concurrency']], ['txn', ['concurrency']] ],
+                    // path-substr → SPECIALIST lenses ONLY. A–E + test-integrity are the always-on core (the floor adds them);
+                    // never list them here. A '' catch-all is forbidden — the core already covers every file.
       buildsClean:true } },
 ]
 const contracts = []                                   // multi-repo seams (Plan derives); [] single-repo
@@ -187,6 +200,8 @@ const sequence  = [{ target: targets[0].name, dependsOn: [] }]
 const CAP_A  = 4                                        // correctness-convergence backstop (predicate exits first)
 const POLISH = 1                                        // maintainability passes — hard cap, NON-blocking
 const MAX_UNTESTABLE_RATIO = 0.34                       // > this ⇒ ship-gate can't return 'ship' (untestable escape-hatch guard)
+const SMALL_DELTA = 3                                   // a delta lap touching ≤ this many files is "small" ⇒ skip VERIFY (triage is still the precision gate)
+const SWEEP_MAX   = 8                                   // gap-only sweep candidate cap (mirrors /code-review SWEEP_MAX)
 
 /* ═══════════ FROZEN MECHANISM (paste verbatim) ═══════════ */
 const multiRepo = targets.length > 1
@@ -197,38 +212,107 @@ async function aretry(prompt, opts, tries=3) {        // one transient 529 must 
   return r
 }
 
-// ── lens registry: every emitted lens key has ONE oracle-anchored definition (single source of truth; closes key-drift + missing-prompt gaps) ──
+// ── CORRECTNESS_ANGLES: the FIVE /code-review technique angles, VERBATIM from code-review-engine-2.1.186.md.
+//    Always-on core — they run on EVERY pass, EVERY target, every lap. They REPLACE the old single vague 'bugs' lens. ──
+const CORRECTNESS_ANGLES = {
+  'angle-A':'Read every hunk in the diff, line by line. Then Read the enclosing function for each hunk — bugs in unchanged lines of a touched function are in scope (the PR re-exposes or fails to fix them). For every line ask: what input, state, timing, or platform makes this line wrong? Look for inverted/wrong conditions, off-by-one, null/undefined deref, missing `await`, falsy-zero checks, wrong-variable copy-paste, error swallowed in catch, unescaped regex metachars.',
+  'angle-B':'For every line the diff DELETES or replaces, name the invariant or behavior it enforced, then search the new code for where that invariant is re-established. If you can\'t find it, that\'s a candidate: a removed guard, a dropped error path, a narrowed validation, a deleted test that was covering a real case.',
+  'angle-C':'For each function the diff changes, find its callers (Grep for the symbol) and check whether the change breaks any call site: a new precondition, a changed return shape, a new exception, a timing/ordering dependency. Also check callees: does a parallel change in the same PR make a call unsafe?',
+  'angle-D':'Scan for the classic pitfalls of the diff\'s language/framework — for example: JS falsy-zero, `==` coercion, closure-captured loop var; Python mutable default args, late-binding closures; Go nil-map write, range-var capture; SQL injection; timezone/DST drift; float equality. Flag any instance the diff introduces.',
+  'angle-E':'When the PR adds or modifies a type that wraps another (cache, proxy, decorator, adapter): check that every method routes to the wrapped instance and not back through a registry/session/global — e.g. a caching provider holding a `delegate` field that resolves IDs via `session.get(...)` instead of `delegate.get(...)` will re-enter the cache or recurse. Also check that the wrapper forwards all the methods the callers actually use.',
+}
+
+// ── LENS_DEF: SPECIALIST + completeness lenses only (no 'bugs' — A–E own correctness now; no a11y/visual-state/git-history — cut). ──
 const LENS_DEF = {
-  bugs:'obvious functional bugs in the change itself — judge against execution semantics',
   'api-contract':'request/response shapes, status codes, error contracts, and back-compat of the changed API surface',
   security:'authz/ownership, injection (SQL/cmd/path), secrets/tokens, SSRF, unsafe deserialization, and trust-boundary input validation; for any public/guest or money route the server must resolve price/totals/owner/identity from its own data, never trust client-supplied fields (flag a client-trusted amount/owner as a tampering/IDOR finding)',
   'data-integrity':'schema/migration safety, constraints, transactional atomicity, lost-update and partial-write hazards',
   concurrency:'races, TOCTOU, lock-ordering, non-atomic read-modify-write, idempotency/retry hazards — reason explicitly about interleavings',
-  'git-history':'ONLY on hunks that MODIFY pre-existing code: reintroduced bugs, broken invariants a past commit established, contradicted reasons a line was written',
-  a11y:'keyboard/focus order, roles/labels, contrast, and announced state on the changed UI',
-  'visual-state':'loading / empty / error / disabled states and layout of the changed UI render correctly',
   'infra-safety':'destructive or irreversible infra changes, state drift, secrets in state, and the blast radius of the plan/apply',
   'public-api':'exported/library API surface: stability, semver impact, accidental breaking changes',
   integration:'CROSS-TARGET contract conformance — request/response shapes, event payloads, shared-type alignment, status codes, versioning/back-compat between targets; name the exact mismatch and WHICH side diverges',
   'test-integrity':'for each @AC-tagged test: does it invoke the REAL code path, assert the SPECIFIC behavior the AC names (not a tautology, not just "is defined", not asserting a value against itself), and would it FAIL if that behavior regressed? Flag vacuous / self-referential AC tests as high findings',
 }
+// shared methodology note so specialists inherit A–E rigor (hunt by tracing callers / auditing deletions / scanning line-by-line)
+const SPECIALIST_METHOD = 'Hunt like the correctness angles: trace callers (Grep the symbol), audit every deleted/replaced line for a dropped guard, and scan changed lines one by one — do not eyeball.'
 const OPUS_LENSES = new Set(['security','concurrency','data-integrity','infra-safety','integration'])
 const lensObj = k => ({ key:k, model: OPUS_LENSES.has(k)?'opus':'sonnet' })
 
-// reality-anchored, surface-gated lens selection
+// ── always-on core + specialist candidates ──
+const CORE_KEYS = [...Object.keys(CORRECTNESS_ANGLES), 'test-integrity']   // A–E + completeness, ALWAYS on
+const SPECIALIST_KEYS = ['security','concurrency','data-integrity','infra-safety','api-contract','public-api']
+
+// reality-anchored, surface-gated SPECIALIST selection (no ui mapping — a11y/visual-state cut)
 const SURFACE_LENS = { api:['api-contract','security'], db:['data-integrity'], async:['concurrency'],
-  infra:['infra-safety'], ui:['a11y','visual-state'], library:['public-api'] }
-function lensesFor(surfaces) {                          // lap-1: base + surface-gated; test-integrity always (completeness is always gated)
-  const keys = new Set(['bugs','test-integrity'])
+  infra:['infra-safety'], library:['public-api'] }
+
+// FLOOR = fail-safe static selection. A sensitive surface can NEVER be under-reviewed. The router may ADD to this, never cut it.
+function floorFor(surfaces) {                          // lap-1: core + surface-gated specialists
+  const keys = new Set(CORE_KEYS)
   surfaces.flatMap(s => SURFACE_LENS[s] || []).forEach(k => keys.add(k))
-  return [...keys].map(lensObj)
+  return keys
 }
-function lensesForFiles(changedFiles, profile) {       // delta laps: only lenses whose surface the change touches
-  const keys = new Set(['bugs'])
-  for (const f of changedFiles) for (const [sub, ls] of profile.fileLensMap) if (sub==='' || f.includes(sub)) ls.forEach(k=>keys.add(k))
+function floorForFiles(changedFiles, profile) {        // delta laps: core + specialists whose path-substr the change touches
+  const keys = new Set(CORE_KEYS)
+  for (const f of changedFiles) for (const [sub, ls] of profile.fileLensMap) if (sub !== '' && f.includes(sub)) ls.forEach(k=>keys.add(k))
+  return keys
+}
+// lensesFor/lensesForFiles now return the floor Set (core + floor specialists) for the router to extend.
+function lensesFor(surfaces)         { return floorFor(surfaces) }
+function lensesForFiles(cf, profile) { return floorForFiles(cf, profile) }
+
+// ── lens ROUTER: a CHEAP agent reads the actual change and returns the specialists THIS change needs.
+//    It may ONLY ADD to the floor (union); it can NEVER remove a floor lens, so a wrong router can't make the run unsafe.
+//    It justifies omissions ("when we need them and when we don't"). NOT a gate — triage + the mechanical gate decide done. ──
+async function routeLenses(t, changed, floorSet, plan, pass) {
+  const router = await aretry(
+    `LENS ROUTER (cheap, fail-safe ADD-only). In ${t.repoPath}, look at the changed files ${JSON.stringify(changed)} `
+  + `and a one-paragraph diff summary you derive (read-only). Decide which of these SPECIALIST lenses THIS change needs `
+  + `BEYOND the always-on floor ${JSON.stringify([...floorSet])}: ${JSON.stringify(SPECIALIST_KEYS)}. `
+  + `ADD any the static floor missed (e.g. a migration in a file not named 'migration', a money route in a generic handler, `
+  + `a txn/lock in a file not named 'async'). For each specialist you OMIT, give a one-line justification of when it WOULD be `
+  + `needed and why it isn't here. You may ONLY return additions — the floor always runs regardless of what you say. `
+  + `Plan context: ${JSON.stringify(plan && plan.plan ? plan.plan.slice(0,800) : '')}.`,
+    { label:`route:${t.name}:${pass}`, phase:'Converge', model:'sonnet', effort:'low',
+      schema:{ type:'object', additionalProperties:false, required:['add','omitJustification'], properties:{
+        add:{ type:'array', items:{ enum: SPECIALIST_KEYS } },
+        omitJustification:{ type:'array', items:{ type:'object', additionalProperties:false, required:['lens','reason'],
+          properties:{ lens:{ enum: SPECIALIST_KEYS }, reason:{ type:'string' } } } } } } })
+  return new Set((router && router.add) || [])           // null router ⇒ empty add ⇒ floor still runs (fail-safe)
+}
+
+// union the floor (always) with the router's additions; map to lens objects with model tiers
+function unionLenses(floorSet, routerAdd) {
+  const keys = new Set(floorSet)
+  for (const k of routerAdd) keys.add(k)                 // ADD-only union — floor is never reduced
   return [...keys].map(lensObj)
 }
 const dispKey = f => `${f.file}:${(f.title||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim().slice(0,80)}`
+
+// ── 3-state recall-biased verify (verbatim ladder from code-review 2.1.186). A scalable PRE-FILTER, not the gate. ──
+const VERDICT = { type:'object', additionalProperties:false, required:['verdict','evidence'], properties:{
+  verdict:{ enum:['CONFIRMED','PLAUSIBLE','REFUTED'] }, evidence:{type:'string'} } }
+const VERIFY_LADDER =
+  `Return exactly one verdict:\n`
++ `- CONFIRMED — you can name the inputs/state that trigger it and the wrong output or crash. Quote the line.\n`
++ `- PLAUSIBLE — mechanism is real, trigger is uncertain (timing, env, config). State what would confirm it.\n`
++ `- REFUTED — factually wrong (code doesn't say that) or guarded elsewhere. Quote the line that proves it.\n\n`
++ `PLAUSIBLE BY DEFAULT — do NOT refute a candidate for being "speculative" or "depends on runtime state" when the state is realistic: `
++ `concurrency races, nil/undefined on a rare-but-reachable path (error handler, cold cache, missing optional field), falsy-zero treated as missing, `
++ `off-by-one on a boundary the code does not exclude, retry storms / partial failures, regex/allowlist that lost an anchor — these are PLAUSIBLE. `
++ `REFUTED ONLY when constructible from the code: factually wrong (quote the actual line); provably impossible (type/constant/invariant — show it); `
++ `already handled in this diff (cite the guard); or pure style with no observable effect. Keep CONFIRMED + PLAUSIBLE; drop REFUTED.`
+
+// One verifier per candidate (no pre-verify dedup — dedup happens at triage by dispKey). Survivors = CONFIRMED + PLAUSIBLE.
+async function verifyCandidates(cands, repoPath, label) {
+  if (!cands.length) return cands
+  const verdicts = await parallel(cands.map(f => () => agent(
+    `Verify ONE candidate finding against the diff in ${repoPath}. Read the relevant file(s) and judge it.\n`
+  + `Candidate — ${f.file}:${f.line||''} — ${f.title||f.summary||''}\nFailure scenario: ${f.failure_scenario||'(none stated)'}\n\n`
+  + VERIFY_LADDER + ` Evidence must quote or cite the relevant line(s).`,
+    { label, phase:'Converge', model:'sonnet', effort:'medium', schema: VERDICT })))
+  return cands.filter((f,i) => { const v = verdicts[i]; return v && (v.verdict==='CONFIRMED' || v.verdict==='PLAUSIBLE') })
+}
 
 // ── DAG-ordered implement: run targets with no unmet deps concurrently, wave by wave; returns {target → result}. ──
 async function implementInDagOrder(targets, sequence, fn) {
@@ -238,7 +322,7 @@ async function implementInDagOrder(targets, sequence, fn) {
   let remaining = seq.slice()
   while (remaining.length) {
     const wave = remaining.filter(s => (s.dependsOn||[]).every(d => done.has(d)))
-    if (!wave.length) throw new Error('ship-ready: cyclic/unsatisfiable DAG: ' + JSON.stringify(remaining))
+    if (!wave.length) throw new Error('assay: cyclic/unsatisfiable DAG: ' + JSON.stringify(remaining))
     const out = await parallel(wave.map(s => () => fn(byTarget[s.target])))   // one target / empty DAG ⇒ parallel() of one
     wave.forEach((s,i) => { results[s.target] = out[i]; done.add(s.target) })
     remaining = remaining.filter(s => !wave.includes(s))
@@ -261,18 +345,47 @@ async function convergeTarget(t, disposed, cursorMap, pass) {
         properties:{changedFiles:{type:'array',items:{type:'string'}},head:{type:'string'}}} })
   const changed = (view && view.changedFiles) || []
 
-  // REVIEW — reality-anchored, surface-gated, delta-scoped. Inline prompt pulls each lens's oracle from LENS_DEF.
-  const lenses = cursor ? lensesForFiles(changed, t.profile) : lensesFor(t.surfaces)
+  // REVIEW — SMART selection: static FLOOR (fail-safe) UNION the cheap router's ADD-only specialist picks; A–E + test-integrity always.
+  const floorSet = cursor ? lensesForFiles(changed, t.profile) : lensesFor(t.surfaces)
+  const routerAdd = await routeLenses(t, changed, floorSet, plan, pass)   // ADD-only; floor never reduced
+  const lenses = unionLenses(floorSet, routerAdd)                          // [{key,model}] core + floor specialists + router specialists
   const skipList = [...disposed.keys()].slice(0, 120)
   const reviewed = await parallel(lenses.map(l => () => agent(
     `Review ${cursor?'ONLY these changed files: '+JSON.stringify(changed):'the staged change'} in ${t.repoPath} `
-  + `through the ${l.key} lens — ${LENS_DEF[l.key]}. Judge the CODE against execution semantics (not docs/comments, which rot). `
+  + `through the ${l.key} lens — ${CORRECTNESS_ANGLES[l.key] || (LENS_DEF[l.key]+' '+SPECIALIST_METHOD)}. `
+  + `Judge the CODE against execution semantics (not docs/comments, which rot). `
+  + `Each finding's failure_scenario must be the USER-VISIBLE consequence (an error, wrong output, or data loss), `
+  + `NOT an intermediate state (a value going stale, a set growing). Pass every candidate with a nameable failure `
+  + `scenario through — do not pre-drop half-believed candidates; an independent verifier judges them next. `
   + `Do NOT re-report anything matching these already-decided items: ${JSON.stringify(skipList)}. `
   + `Empty findings is a good result; verify framework defaults before asserting (e.g. status codes).`,
     { label:`review:${l.key}:${t.name}:${pass}`, phase:'Converge', model:l.model, effort:l.model==='opus'?'high':'medium', schema: FINDINGS })))
-  const fresh = reviewed.filter(Boolean).flatMap(r=>r.findings||[]).filter(f => !disposed.has(dispKey(f)))
+  let fresh = reviewed.filter(Boolean).flatMap(r=>r.findings||[]).filter(f => !disposed.has(dispKey(f)))
 
-  // TRIAGE — only NEW findings. Record every verdict into this target's disposition cache.
+  // VERIFY — 3-state recall-biased pre-filter (CONFIRMED/PLAUSIBLE kept, REFUTED dropped). GATED: it is a scalable
+  // pre-filter, NOT the precision gate (triage is). Run on lap-1 (whole change) and on LARGE delta laps; SKIP small
+  // delta laps where the candidate set is already tiny and triage alone is cheap enough.
+  const runVerify = !cursor || changed.length > SMALL_DELTA
+  if (runVerify && fresh.length) fresh = await verifyCandidates(fresh, t.repoPath, `verify:${t.name}:${pass}`)
+
+  // SWEEP — lap-1 ONLY: one fresh gap-only finder for what the angled pass tends to miss; its candidates are ALSO
+  // verified, then merged into the fresh set (triage's dispKey dedup absorbs any overlap). No synthesize stage.
+  if (!cursor) {
+    const already = fresh.map(f => `${f.file}:${f.line||''} — ${f.title||f.summary||''}`).slice(0, 120)
+    const swept = await aretry(
+      `Re-read the staged diff in ${t.repoPath} and its enclosing functions looking ONLY for defects NOT already listed.\n`
+    + `Already-found (do NOT re-derive or re-confirm): ${already.length?JSON.stringify(already):'(none)'}.\n`
+    + `Focus on what the first pass misses: moved/extracted code that dropped a guard or anchor; second-tier footguns `
+    + `(default evaluated once, hash() non-determinism, lock-scope shrink, predicate methods with side effects); `
+    + `setup/teardown asymmetry in tests; config defaults flipped. Surface up to ${SWEEP_MAX} additional findings; `
+    + `if nothing new, return an empty list — do not pad.`,
+      { label:`sweep:${t.name}:${pass}`, phase:'Converge', model:'sonnet', effort:'medium', schema: FINDINGS })
+    const sweepFresh = ((swept&&swept.findings)||[]).slice(0, SWEEP_MAX).filter(f => !disposed.has(dispKey(f)))
+    const sweepKept = sweepFresh.length ? await verifyCandidates(sweepFresh, t.repoPath, `verify:sweep:${t.name}:${pass}`) : []
+    fresh = fresh.concat(sweepKept)
+  }
+
+  // TRIAGE = THE GATE — only verify-survivors (+ verified sweep) reach it. Record every verdict into the disposition cache.
   let accepted = []
   if (fresh.length) {
     const tri = await aretry(
@@ -405,25 +518,48 @@ while (true) {
 }
 
 // ══════════ MECHANISM B — polish ONCE per target (NON-blocking, advisory) ══════════
+// Quality clock: thermo-nuclear (structure/altitude) + yagni (deletion) SUBSUME code-review's
+// reuse/simplification/altitude. Plus the two real gaps — `efficiency` (wasted work / leaks) and a
+// FORWARD-direction `conventions` lens (quote the exact CLAUDE.md rule), the mirror of reverse-direction
+// `doc-drift`. All advisory: they write the ledger, never the gate. One pass (POLISH).
 phase('Polish')
 let ledger = { markers: [] }
 for (let i=0;i<POLISH;i++){
   const perRepo = await parallel(targets.map(t => () => aretry(
     `Invoke Skill({ skill:'thermo-nuclear-code-quality-review' }) and apply the \`yagni\` lens to the FULL diff in `
   + `${t.repoPath}: find over-engineering/duplication to DELETE (delete/stdlib/native/yagni/shrink; net −lines). `
-  + `Also flag DOC-DRIFT: any CLAUDE.md rule or code comment the implementation now contradicts (the code is right — the doc is stale). `
-  + `Return findings.`,
+  + `ALSO run the \`efficiency\` lens: flag wasted work the diff introduces: redundant computation or repeated I/O, `
+  + `independent operations run sequentially, blocking work added to startup or hot paths. Also flag long-lived objects `
+  + `built from closures or captured environments — they keep the entire enclosing scope alive for the object's lifetime `
+  + `(a memory leak when that scope holds large values); prefer a class/struct that copies only the fields it needs. `
+  + `Name the cheaper alternative. `
+  + `ALSO run \`doc-drift\` (REVERSE direction): any CLAUDE.md rule or code comment the implementation now contradicts `
+  + `(the code is right — the doc is stale). `
+  + `ALSO run \`conventions\` (FORWARD direction): find the CLAUDE.md files that govern the changed code (user-level `
+  + `~/.claude/CLAUDE.md, the repo-root CLAUDE.md, plus any CLAUDE.md/CLAUDE.local.md in a directory that is an ancestor `
+  + `of a changed file — a directory's CLAUDE.md only applies to files at or below it). Read each that exists, then check `
+  + `the diff for clear violations. Only flag a violation when you can QUOTE THE EXACT RULE and the exact line that breaks `
+  + `it — no style preferences, no vague "spirit of the doc" inferences. Name the CLAUDE.md path and quote the rule. If no `
+  + `CLAUDE.md applies, return nothing for this lens. (conventions is ADVISORY — it never gates; the code still wins on a `
+  + `genuine code-vs-doc conflict, which is what doc-drift records.) `
+  + `For EVERY finding, state the CONCRETE COST in failure_scenario — what is duplicated / wasted / leaked, or which exact `
+  + `CLAUDE.md rule is broken — not a vague crash and not an intermediate state. Return findings.`,
     { label:`polish:review:${t.name}`, phase:'Polish', model:'opus', effort:'high', schema: FINDINGS })))
   const allQ = perRepo.filter(Boolean).flatMap(r => r.findings||[])
-  const qa = await aretry(`Triage ${JSON.stringify(allQ)}: accept only cheap, clearly-worth-it cleanups (obvious DRY extractions). Everything else is deferred, not rejected.`,
+  const qa = await aretry(`Triage ${JSON.stringify(allQ)}: accept only cheap, clearly-worth-it cleanups (obvious DRY extractions, `
+  + `a sequential pair trivially made concurrent, a closure leak with a one-line fix). Each kept item must name its concrete cost `
+  + `(what is duplicated/wasted/leaked, or the exact CLAUDE.md rule broken) — drop vague ones. A \`conventions\` item with no exact `
+  + `quoted rule is noise: reject it. Everything else is deferred, not rejected. Findings:\n${JSON.stringify(allQ)}`,
     { label:'polish:triage', phase:'Polish', model:'sonnet', effort:'medium', schema: TRIAGE })
   const acc = (qa&&qa.accepted)||[]
   if (acc.length) for (const t of targets) await aretry(`Apply any of these cheap cleanups that belong to ${t.repoPath}, then run \`${t.profile.commands.verify}\` (must stay tier-0 green). Do NOT commit. ${JSON.stringify(acc)}`,
     { label:`polish:fix:${t.name}`, phase:'Polish', model:'sonnet', effort:'medium', schema: FIXED })
   const harvested = await aretry(
     `Across ${JSON.stringify(targets.map(t=>t.repoPath))}, grep for \`(#|//|--) ?ponytail:\` markers (skip node_modules/.git/build). Each → a ledger row `
-  + `(kind:'ponytail', location, note, ceiling, upgrade; rotRisk=true if no upgrade trigger). Add the deferred polish findings `
-  + `(kind:'deferred-finding') and the doc-drift items (kind:'doc-drift') from this evidence: ${JSON.stringify((qa&&qa.rejected)||[])}.`,
+  + `(kind:'ponytail', location, note, ceiling, upgrade; rotRisk=true if no upgrade trigger). From this deferred/rejected evidence `
+  + `${JSON.stringify((qa&&qa.rejected)||[])}: add the deferred efficiency/yagni/thermo polish findings (kind:'deferred-finding'), the `
+  + `reverse-direction doc-drift items (kind:'doc-drift'), and the forward-direction convention violations (kind:'convention-gap', `
+  + `note = the quoted CLAUDE.md rule + the breaking line; rotRisk=false). Every note states the concrete cost, not a vague summary.`,
     { label:'polish:ledger', phase:'Polish', model:'haiku', effort:'low', schema: LEDGER })
   if (harvested && harvested.markers) ledger = harvested
 }
@@ -467,9 +603,12 @@ return v
   per unconverged target each round.
 - `integrationPass(targets, contracts, disposed)` — the multi-repo seam review→triage→fix; an accepted seam fix
   un-converges the sides so they re-gate. No-op path for single-repo (never called when `!multiRepo`).
-- The per-target disposition caches (`disposed`), per-target delta cursors (`cursorMap`), `converged` set, and
-  `lensesFor*`/`LENS_DEF` are the v2 mechanism — they are why review cost shrinks each pass, triage stops
-  re-litigating ghosts, and every emitted lens key has guidance. Do not "simplify" them away.
+- The per-target disposition caches (`disposed`), per-target delta cursors (`cursorMap`), `converged` set, the
+  `CORRECTNESS_ANGLES`/`LENS_DEF` registries, the static `floorFor*` floor, the ADD-only `routeLenses` router, and
+  the 3-state `verifyCandidates` pre-filter are the v2 mechanism — they are why A–E + test-integrity always run, a
+  sensitive surface can never be under-reviewed (floor), the router can only widen coverage (never make a run
+  unsafe), REFUTED candidates are dropped before triage, review cost shrinks each pass, triage stops re-litigating
+  ghosts, and every emitted lens key has guidance. Do not "simplify" them away.
 
 ## Authoring rules (v2)
 

@@ -1,6 +1,6 @@
 # Multi-Repo & Contract-First
 
-How ship-ready handles a unit of work that spans more than one repo/service — two backend services and a
+How assay handles a unit of work that spans more than one repo/service — two backend services and a
 mobile app, a service plus a shared types package, a monorepo with several affected packages. The design
 principle, validated against current research (the "spec is the contract" line of work, and multi-agent
 API-first systems): **make the contract the source of truth, freeze it first, then let each target be built

@@ -1,74 +1,111 @@
 # Code-Review Roster (diff-scoped fan-out)
 
-This reproduces the official `/code-review` engine as a workflow-native fan-out, adapted to review a **diff**
-(not a GitHub PR) so it composes inside a Workflow. Each lens is an independent reviewer agent; every finding
-it returns goes to **triage** (the gate). Optionally — for large audits only — findings can first be scored
-0–100 so near-certain false positives are stripped before triage (see `SCORE_FLOOR`); by default nothing is
-dropped pre-triage.
+This MIRRORS the CURRENT `/code-review` angles (A–E) + 3-state recall-biased verify at the **script** level,
+adapted to review a **diff** (not a GitHub PR) so it composes inside a Workflow. Source of truth for every angle
+text and verdict ladder below: `./code-review-engine-2.1.186.md`. assay's Mechanism A drives this as its own
+`parallel()` fan-out (a Workflow phase-agent can't spawn subagents).
 
-Two things are faithful to the original and must stay verbatim: the **0–100 confidence rubric** and the
-**false-positive guidance**. The reviewer roster keeps the original 5 lenses and adds `security` + `concurrency`.
+The roster is **not** a flat list of equal lenses anymore. It is:
+- an **always-on correctness core** — the five `/code-review` technique angles `angle-A`…`angle-E` (verbatim),
+- an **always-on completeness lens** — `test-integrity`,
+- **SMART-selected specialists** — `security`, `data-integrity`, `concurrency`, `infra-safety`, `api-contract`,
+  `public-api` (`integration` is multi-repo-only), chosen by a static surface/`fileLensMap` **floor** UNION a
+  cheap **lens-router** that may only ADD to the floor, never remove from it.
 
-## `reviewerPrompt(lensKey, DIFF)`
+There is **no 0–100 confidence rubric and no `SCORE_FLOOR`** — those are removed. Precision is the recall-biased
+3-state VERIFY pre-filter followed by TRIAGE (the gate). There is **no synthesize stage** — assay auto-fixes
+real findings and re-checks; triage's `dispKey` dedup absorbs any merge/overlap.
 
-Each lens reviews only the change set (`DIFF`) and returns findings per the `FINDINGS` schema — each with a
-clear `title`, `file`, `line` (or null), `severity`, `category` (set to the lens key), and a one-paragraph
-`rationale`. Tell every reviewer: focus on the change itself, prefer real issues over nitpicks, and ignore
-anything a typechecker/linter/compiler/CI would catch.
+## The pipeline (per target, per lap)
 
-| `lensKey` | Reviewer prompt (fill in `${DIFF}`) | Default model |
-|---|---|---|
-| `claude-md` | "Audit the changes in `${DIFF}` against the repository's CLAUDE.md guideline files (root + any in modified dirs). CLAUDE.md is guidance for writing code, so not every line applies during review — only flag a violation when the CLAUDE.md actually calls out that specific thing. Return findings." | sonnet |
-| `bugs` | "Read the file changes in `${DIFF}` and do a shallow scan for **obvious, large** bugs in the changes themselves. Stay within the change set; don't go spelunking for extra context. Focus on real functional bugs; skip nitpicks and likely false positives." | sonnet |
-| `git-history` | "Read the git blame/history of the code modified in `${DIFF}`. Flag bugs that are only visible in light of that history — e.g. a change that reintroduces a previously-fixed bug, breaks an invariant a past commit established, or contradicts the reason a line was written." | sonnet |
-| `prior-prs` | "Find prior pull requests / commits that touched the files in `${DIFF}` and read any review comments on them. Flag issues where guidance from those past reviews also applies to this change." | sonnet |
-| `code-comments` | "Read the code comments in and around the files modified in `${DIFF}`. Ensure the changes comply with any guidance, invariant, or warning those comments express; flag where the change violates a documented assumption." | sonnet |
-| `security` | "Security review of `${DIFF}` only. Look for: missing authz/ownership checks, broken authentication, injection (SQL/command/path), secrets or tokens in code/logs, unsafe deserialization, SSRF, missing input validation on a trust boundary, and data exposure in responses. Flag concrete, in-diff issues with the exploit path in the rationale." | **opus** |
-| `concurrency` | "Concurrency & data-integrity review of `${DIFF}` only. Look for: races, lost updates, TOCTOU, missing/incorrect locking or lock-ordering, non-atomic read-modify-write, idempotency gaps, retry/at-least-once hazards, and transaction-boundary mistakes. Reason explicitly about interleavings; flag the specific sequence that breaks." | **opus** |
+```
+finders (A–E + test-integrity + selected specialists)
+  → fresh-filter vs the per-target `disposed` cache   (FIRST — drop already-decided findings)
+  → VERIFY   (3-state recall-biased; GATED to lap-1 / large delta; SKIP small delta laps)
+        keep CONFIRMED + PLAUSIBLE, drop REFUTED
+  → SWEEP    (lap-1 ONLY; one fresh gap-only finder; its candidates ALSO verified, then merged)
+  → TRIAGE = THE GATE  (only verify-survivors + verified sweep reach it; the only stage that writes the cache)
+  → FIX
+  → mechanical GATE (script computes green; unchanged)
+```
 
-> If the codebase isn't one where a lens applies (e.g. no auth surface in the diff), that lens should return
-> an empty `findings` array rather than inventing something. Empty is a valid, good result.
+## The five correctness angles (always-on; verbatim)
 
-## `scorerPrompt(finding, DIFF)` — verbatim confidence rubric
+| Angle | What it hunts |
+|---|---|
+| `angle-A` — line-by-line | Read every hunk in the diff, line by line. Then Read the enclosing function for each hunk — bugs in unchanged lines of a touched function are in scope (the PR re-exposes or fails to fix them). For every line ask: what input, state, timing, or platform makes this line wrong? Look for inverted/wrong conditions, off-by-one, null/undefined deref, missing `await`, falsy-zero checks, wrong-variable copy-paste, error swallowed in catch, unescaped regex metachars. |
+| `angle-B` — removed-behavior | For every line the diff DELETES or replaces, name the invariant or behavior it enforced, then search the new code for where that invariant is re-established. If you can't find it, that's a candidate: a removed guard, a dropped error path, a narrowed validation, a deleted test that was covering a real case. (This absorbs the job the cut `git-history` lens used to do.) |
+| `angle-C` — cross-file tracer | For each function the diff changes, find its callers (Grep for the symbol) and check whether the change breaks any call site: a new precondition, a changed return shape, a new exception, a timing/ordering dependency. Also check callees: does a parallel change in the same PR make a call unsafe? |
+| `angle-D` — language-pitfall | Scan for the classic pitfalls of the diff's language/framework — for example: JS falsy-zero, `==` coercion, closure-captured loop var; Python mutable default args, late-binding closures; Go nil-map write, range-var capture; SQL injection; timezone/DST drift; float equality. Flag any instance the diff introduces. |
+| `angle-E` — wrapper/proxy | When the PR adds or modifies a type that wraps another (cache, proxy, decorator, adapter): check that every method routes to the wrapped instance and not back through a registry/session/global — e.g. a caching provider holding a `delegate` field that resolves IDs via `session.get(...)` instead of `delegate.get(...)` will re-enter the cache or recurse. Also check that the wrapper forwards all the methods the callers actually use. |
 
-For each finding, score 0–100 for how confident you are it is a **real** issue (vs a false positive). For a
-finding flagged on CLAUDE.md grounds, first double-check the CLAUDE.md actually calls out that issue
-specifically. Give the agent this scale **verbatim**:
+`angle-C` overlaps `api-contract`/`public-api` and `angle-B` overlaps the old git-history job — the overlap is
+**intentional**. Do not delete a specialist to avoid it; triage's `dispKey` dedup absorbs the double-reports.
 
-- **0 — Not confident at all.** A false positive that doesn't stand up to light scrutiny, or a pre-existing issue.
-- **25 — Somewhat confident.** Might be real, might be a false positive; couldn't verify. If stylistic, it was
-  not explicitly called out in the relevant CLAUDE.md.
-- **50 — Moderately confident.** Verified it's a real issue, but it might be a nitpick or rare in practice;
-  relative to the rest of the change, not very important.
-- **75 — Highly confident.** Double-checked and very likely a real issue that will be hit in practice; the
-  current approach is insufficient. Important and will directly impact functionality, or directly named in the
-  relevant CLAUDE.md.
-- **100 — Absolutely certain.** Double-checked and confirmed it is definitely a real issue that will happen
-  frequently in practice; the evidence directly confirms it.
+Each finder surfaces up to ~8 candidates, each with `file`, `line`, a one-line summary, and a concrete
+`failure_scenario` — the **user-visible consequence** (error, wrong output, data loss), NOT an intermediate state
+(value stale, set grows). Pass every candidate with a nameable failure scenario through — do not silently drop
+half-believed candidates; the verifier judges them next. If nothing qualifies, return an empty list.
 
-Return `{ confidence: <0-100>, verdict: <one line> }`. This scorer runs **only when `SCORE_FLOOR` is set**
-(large audits). Then drop findings with `confidence < SCORE_FLOOR` (~25 — near-certain false positives only)
-and pass `confidence` to triage as a signal. By default scoring is skipped entirely and triage is the sole gate.
+## The specialist lenses (SMART-selected)
 
-## False positives to discard (verbatim guidance)
+`security`, `data-integrity`, `concurrency`, `infra-safety`, `api-contract`, `public-api` carry the oracle-anchored
+definitions in the script's `LENS_DEF` registry; `integration` is cross-target only. They inherit A–E rigor via a
+shared methodology note (hunt by tracing callers / auditing deletions / scanning line-by-line). The static floor is
+the fail-safe (a sensitive surface can NEVER be under-reviewed); the router can only widen coverage, never make a
+run unsafe; selection is NOT gating — triage + the mechanical build/AC gate decide "done".
 
-Tell both the reviewers and the scorers to treat these as non-issues:
+## 3-state recall-biased verify (verbatim ladder)
+
+One verifier per surviving candidate (no pre-verify dedup). Return exactly one verdict:
+
+- **CONFIRMED** — you can name the inputs/state that trigger it and the wrong output or crash. Quote the line.
+- **PLAUSIBLE** — mechanism is real, trigger is uncertain (timing, env, config). State what would confirm it.
+- **REFUTED** — factually wrong (code doesn't say that) or guarded elsewhere. Quote the line that proves it.
+
+**PLAUSIBLE by default** — do not refute a candidate for being "speculative" or "depends on runtime state" when the
+state is realistic: concurrency races, nil/undefined on a rare-but-reachable path (error handler, cold cache,
+missing optional field), falsy-zero treated as missing, off-by-one on a boundary the code does not exclude, retry
+storms / partial failures, regex/allowlist that lost an anchor. These are PLAUSIBLE. **REFUTED** only when
+constructible from the code: factually wrong (quote the actual line); provably impossible (type/constant/invariant
+— show it); already handled in this diff (cite the guard); or pure style with no observable effect.
+
+**Keep CONFIRMED + PLAUSIBLE. Drop REFUTED.** Verify is a scalable PRE-FILTER, not the precision gate — triage is.
+It is GATED: run it on lap-1 (whole change) and on large delta laps; SKIP small delta laps where the candidate set
+is already tiny. REFUTED candidates are NOT written to the `disposed` cache (a recall-biased refute is cheap to
+re-derive on a later, higher-coverage lap); only triage writes the cache.
+
+## Sweep (lap-1 only)
+
+One fresh gap-only finder re-reads the diff and enclosing functions for defects NOT already found. Focus on what
+the first pass misses: moved/extracted code that dropped a guard or anchor; second-tier footguns (default evaluated
+once, `hash()` non-determinism, lock-scope shrink, predicate methods with side effects); setup/teardown asymmetry in
+tests; config defaults flipped. Up to `SWEEP_MAX` (8) candidates; its candidates go through the SAME verifier before
+joining the fresh set. If nothing new, return an empty list — do not pad.
+
+## Empty is a good result
+
+If the codebase isn't one where a lens applies (e.g. no auth surface in the diff), that lens returns an empty
+findings array rather than inventing something. Empty is a valid, good result.
+
+## False positives to discard (verbatim guidance — re-anchored to the verifier/triage)
+
+Tell the finders, the verifier, and triage to treat these as non-issues:
 
 - Pre-existing issues (not introduced by this change).
 - Something that looks like a bug but is not actually a bug.
 - Pedantic nitpicks a senior engineer wouldn't call out.
-- Issues a linter, typechecker, or compiler would catch (missing imports, type errors, broken tests,
-  formatting, pedantic style). Assume CI runs these separately.
-- General code-quality gripes (test coverage, documentation, vague "security" hand-waving) **unless** the
-  relevant CLAUDE.md explicitly requires it. (Note: the dedicated `security`/`concurrency` lenses DO surface
-  concrete, in-diff security/race bugs — that's different from a generic "add more tests" nit.)
-- Issues that CLAUDE.md mentions but the code explicitly silences (e.g. a lint-ignore comment).
+- Issues a linter, typechecker, or compiler would catch (missing imports, type errors, broken tests, formatting,
+  pedantic style). Assume CI runs these separately.
+- General code-quality gripes (test coverage, documentation, vague "security" hand-waving) — the dedicated
+  `security`/`concurrency`/`data-integrity` specialists DO surface concrete, in-diff bugs; that is different from a
+  generic "add more tests" nit.
 
-## Scaling
+## Mechanism B (advisory) cleanup angles — for cross-reference
 
-- **Small diff / quick check:** drop to `['bugs','claude-md','security']`.
-- **Full audit:** keep all 7; consider running two independent `bugs` reviewers and taking the union (the
-  original `/code-review` runs the CLAUDE.md lens twice for redundancy — do the same for `bugs` on big diffs).
-- **Precision is triage's job, not a threshold.** Leave `SCORE_FLOOR` off and let triage cut — it's the
-  smartest agent and verifies against the code. Enable a low `SCORE_FLOOR` (~25) only when candidate volume on a
-  big audit would overwhelm a single triage agent; raise it no higher, or you start deleting real findings.
+assay's quality clock keeps thermo-nuclear (structure/altitude) + yagni (deletion), which subsume
+`/code-review`'s reuse/simplification/altitude cleanup angles, and ADDS the two real gaps: `efficiency` (wasted
+work / repeated I/O / sequential-independent ops / hot-path-blocking / closure-capture memory leaks) and
+forward-direction `conventions` (quote-the-exact-CLAUDE.md-rule, advisory, returns nothing if no CLAUDE.md applies),
+which pairs with reverse-direction `doc-drift`. All of Mechanism B is advisory and never gates; it lives in
+`../../assay/references/canonical-workflow.md`, not here.
